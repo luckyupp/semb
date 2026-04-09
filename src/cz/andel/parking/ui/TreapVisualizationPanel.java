@@ -13,12 +13,12 @@ import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.RenderingHints;
 import java.lang.reflect.Field;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.WeakHashMap;
 import java.util.function.Supplier;
 
 public class TreapVisualizationPanel extends JPanel {
@@ -277,7 +277,7 @@ public class TreapVisualizationPanel extends JPanel {
     }
 
     private static final class ReflectionAccess {
-        private static final ConcurrentMap<Class<?>, ReflectionAccess> CACHE = new ConcurrentHashMap<>();
+        private static final Map<Class<?>, ReflectionAccess> CACHE = Collections.synchronizedMap(new WeakHashMap<>());
         private final Field rootField;
         private final Field keyField;
         private final Field priorityField;
@@ -293,11 +293,18 @@ public class TreapVisualizationPanel extends JPanel {
         }
 
         private static ReflectionAccess forTreap(Class<?> treapClass) throws ReflectiveOperationException {
-            ReflectionAccess cached = CACHE.get(treapClass);
-            if (cached != null) {
-                return cached;
+            synchronized (CACHE) {
+                ReflectionAccess cached = CACHE.get(treapClass);
+                if (cached != null) {
+                    return cached;
+                }
+                ReflectionAccess created = createReflectionAccess(treapClass);
+                CACHE.put(treapClass, created);
+                return created;
             }
+        }
 
+        private static ReflectionAccess createReflectionAccess(Class<?> treapClass) throws ReflectiveOperationException {
             Field rootField = treapClass.getDeclaredField("root");
             rootField.setAccessible(true);
             Class<?> nodeClass = null;
@@ -308,7 +315,7 @@ public class TreapVisualizationPanel extends JPanel {
                 }
             }
             if (nodeClass == null) {
-                throw new IllegalStateException("Treap node class not found");
+                throw new IllegalStateException("Treap node class not found for " + treapClass.getName());
             }
             Field keyField = nodeClass.getDeclaredField("key");
             Field priorityField = nodeClass.getDeclaredField("priority");
@@ -318,9 +325,7 @@ public class TreapVisualizationPanel extends JPanel {
             priorityField.setAccessible(true);
             leftField.setAccessible(true);
             rightField.setAccessible(true);
-            ReflectionAccess created = new ReflectionAccess(rootField, keyField, priorityField, leftField, rightField);
-            CACHE.putIfAbsent(treapClass, created);
-            return created;
+            return new ReflectionAccess(rootField, keyField, priorityField, leftField, rightField);
         }
     }
 
@@ -343,8 +348,7 @@ public class TreapVisualizationPanel extends JPanel {
             for (Map.Entry<Integer, Integer> currentParent : current.parentByKey.entrySet()) {
                 Integer child = currentParent.getKey();
                 Integer parent = currentParent.getValue();
-                Integer previousParentOfParent = previous.parentByKey.get(parent);
-                if (previousParentOfParent == null || !previousParentOfParent.equals(child)) {
+                if (!wasParentChildReversed(previous, child, parent)) {
                     continue;
                 }
 
@@ -357,6 +361,11 @@ public class TreapVisualizationPanel extends JPanel {
                 return new RotationInfo("UNKNOWN", child, parent);
             }
             return none();
+        }
+
+        private static boolean wasParentChildReversed(TreeSnapshot previous, Integer child, Integer parent) {
+            Integer previousParentOfParent = previous.parentByKey.get(parent);
+            return previousParentOfParent != null && previousParentOfParent.equals(child);
         }
 
         private String label() {
