@@ -276,28 +276,33 @@ public class Treap<K extends Comparable<K>, V> {
     }
 
     private void validateOrThrow() {
-        if (!validateRecursive(root, null, null, null)) {
-            throw new IllegalStateException("Treap invariants violated");
+        String violation = validateRecursive(root, null, null, null);
+        if (violation != null) {
+            throw new IllegalStateException("Treap invariants violated: " + violation);
         }
     }
 
-    private boolean validateRecursive(Node<K, V> node, K minExclusive, K maxExclusive, Integer parentPriority) {
+    private String validateRecursive(Node<K, V> node, K minExclusive, K maxExclusive, Integer parentPriority) {
         // Checks both invariants: strict BST ordering and max-heap priorities.
         if (node == null) {
-            return true;
+            return null;
         }
 
         if (minExclusive != null && node.key.compareTo(minExclusive) <= 0) {
-            return false;
+            return "BST violation at key=" + node.key + " <= min=" + minExclusive;
         }
         if (maxExclusive != null && node.key.compareTo(maxExclusive) >= 0) {
-            return false;
+            return "BST violation at key=" + node.key + " >= max=" + maxExclusive;
         }
         if (parentPriority != null && node.priority > parentPriority) {
-            return false;
+            return "Heap violation at key=" + node.key + " (priority=" + node.priority
+                    + ") > parent priority " + parentPriority;
         }
 
-        return validateRecursive(node.left, minExclusive, node.key, node.priority)
-                && validateRecursive(node.right, node.key, maxExclusive, node.priority);
+        String leftViolation = validateRecursive(node.left, minExclusive, node.key, node.priority);
+        if (leftViolation != null) {
+            return leftViolation;
+        }
+        return validateRecursive(node.right, node.key, maxExclusive, node.priority);
     }
 }

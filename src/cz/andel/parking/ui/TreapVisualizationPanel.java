@@ -17,6 +17,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
 
 public class TreapVisualizationPanel extends JPanel {
@@ -37,7 +39,7 @@ public class TreapVisualizationPanel extends JPanel {
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
         TreeSnapshot snapshot = TreeSnapshot.fromTreap(treapSupplier.get());
-        if (!snapshot.structureSignature.equals(lastSnapshot.structureSignature)) {
+        if (!snapshot.hasSameStructure(lastSnapshot)) {
             lastRotation = RotationInfo.detect(lastSnapshot, snapshot);
             lastSnapshot = snapshot;
         }
@@ -176,24 +178,27 @@ public class TreapVisualizationPanel extends JPanel {
         private final Map<Integer, Integer> parentByKey;
         private final Map<Integer, Integer> leftChildByKey;
         private final Map<Integer, Integer> rightChildByKey;
-        private final String structureSignature;
 
         private TreeSnapshot(
                 List<List<Optional<Map.Entry<Integer, Integer>>>> levels,
                 Map<Integer, Integer> parentByKey,
                 Map<Integer, Integer> leftChildByKey,
-                Map<Integer, Integer> rightChildByKey,
-                String structureSignature
+                Map<Integer, Integer> rightChildByKey
         ) {
             this.levels = levels;
             this.parentByKey = parentByKey;
             this.leftChildByKey = leftChildByKey;
             this.rightChildByKey = rightChildByKey;
-            this.structureSignature = structureSignature;
         }
 
         private static TreeSnapshot empty() {
-            return new TreeSnapshot(List.of(), Map.of(), Map.of(), Map.of(), "empty");
+            return new TreeSnapshot(List.of(), Map.of(), Map.of(), Map.of());
+        }
+
+        private boolean hasSameStructure(TreeSnapshot other) {
+            return parentByKey.equals(other.parentByKey)
+                    && leftChildByKey.equals(other.leftChildByKey)
+                    && rightChildByKey.equals(other.rightChildByKey);
         }
 
         private static TreeSnapshot fromTreap(Treap<Integer, ?> treap) {
@@ -202,21 +207,11 @@ public class TreapVisualizationPanel extends JPanel {
             }
 
             try {
-                Field rootField = treap.getClass().getDeclaredField("root");
-                rootField.setAccessible(true);
-                Object root = rootField.get(treap);
+                ReflectionAccess reflection = ReflectionAccess.forTreap(treap.getClass());
+                Object root = reflection.rootField.get(treap);
                 if (root == null) {
                     return empty();
                 }
-
-                Field keyField = root.getClass().getDeclaredField("key");
-                Field priorityField = root.getClass().getDeclaredField("priority");
-                Field leftField = root.getClass().getDeclaredField("left");
-                Field rightField = root.getClass().getDeclaredField("right");
-                keyField.setAccessible(true);
-                priorityField.setAccessible(true);
-                leftField.setAccessible(true);
-                rightField.setAccessible(true);
 
                 List<List<Optional<Map.Entry<Integer, Integer>>>> levels = new java.util.ArrayList<>();
                 Map<Integer, Integer> parentByKey = new HashMap<>();
@@ -240,23 +235,23 @@ public class TreapVisualizationPanel extends JPanel {
                         }
 
                         hasRealNode = true;
-                        int key = ((Number) keyField.get(node)).intValue();
-                        int priority = priorityField.getInt(node);
+                        int key = ((Number) reflection.keyField.get(node)).intValue();
+                        int priority = reflection.priorityField.getInt(node);
                         level.add(Optional.of(Map.entry(key, priority)));
 
-                        Object left = leftField.get(node);
-                        Object right = rightField.get(node);
+                        Object left = reflection.leftField.get(node);
+                        Object right = reflection.rightField.get(node);
                         next.add(left);
                         next.add(right);
 
                         if (left != null) {
-                            int leftKey = ((Number) keyField.get(left)).intValue();
+                            int leftKey = ((Number) reflection.keyField.get(left)).intValue();
                             parentByKey.put(leftKey, key);
                             leftChildByKey.put(key, leftKey);
                             hasNextRealNode = true;
                         }
                         if (right != null) {
-                            int rightKey = ((Number) keyField.get(right)).intValue();
+                            int rightKey = ((Number) reflection.keyField.get(right)).intValue();
                             parentByKey.put(rightKey, key);
                             rightChildByKey.put(key, rightKey);
                             hasNextRealNode = true;
@@ -274,11 +269,58 @@ public class TreapVisualizationPanel extends JPanel {
                     current = next;
                 }
 
-                String signature = parentByKey.toString() + "|" + leftChildByKey + "|" + rightChildByKey;
-                return new TreeSnapshot(levels, parentByKey, leftChildByKey, rightChildByKey, signature);
+                return new TreeSnapshot(levels, parentByKey, leftChildByKey, rightChildByKey);
             } catch (ReflectiveOperationException ex) {
                 throw new IllegalStateException("Treap reflection failed", ex);
             }
+        }
+    }
+
+    private static final class ReflectionAccess {
+        private static final ConcurrentMap<Class<?>, ReflectionAccess> CACHE = new ConcurrentHashMap<>();
+        private final Field rootField;
+        private final Field keyField;
+        private final Field priorityField;
+        private final Field leftField;
+        private final Field rightField;
+
+        private ReflectionAccess(Field rootField, Field keyField, Field priorityField, Field leftField, Field rightField) {
+            this.rootField = rootField;
+            this.keyField = keyField;
+            this.priorityField = priorityField;
+            this.leftField = leftField;
+            this.rightField = rightField;
+        }
+
+        private static ReflectionAccess forTreap(Class<?> treapClass) throws ReflectiveOperationException {
+            ReflectionAccess cached = CACHE.get(treapClass);
+            if (cached != null) {
+                return cached;
+            }
+
+            Field rootField = treapClass.getDeclaredField("root");
+            rootField.setAccessible(true);
+            Class<?> nodeClass = null;
+            for (Class<?> nested : treapClass.getDeclaredClasses()) {
+                if ("Node".equals(nested.getSimpleName())) {
+                    nodeClass = nested;
+                    break;
+                }
+            }
+            if (nodeClass == null) {
+                throw new IllegalStateException("Treap node class not found");
+            }
+            Field keyField = nodeClass.getDeclaredField("key");
+            Field priorityField = nodeClass.getDeclaredField("priority");
+            Field leftField = nodeClass.getDeclaredField("left");
+            Field rightField = nodeClass.getDeclaredField("right");
+            keyField.setAccessible(true);
+            priorityField.setAccessible(true);
+            leftField.setAccessible(true);
+            rightField.setAccessible(true);
+            ReflectionAccess created = new ReflectionAccess(rootField, keyField, priorityField, leftField, rightField);
+            CACHE.putIfAbsent(treapClass, created);
+            return created;
         }
     }
 
