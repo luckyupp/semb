@@ -271,7 +271,7 @@ public class TreapVisualizationPanel extends JPanel {
 
                 return new TreeSnapshot(levels, parentByKey, leftChildByKey, rightChildByKey);
             } catch (ReflectiveOperationException ex) {
-                throw new IllegalStateException("Treap reflection failed", ex);
+                return empty();
             }
         }
     }
@@ -348,7 +348,7 @@ public class TreapVisualizationPanel extends JPanel {
             for (Map.Entry<Integer, Integer> currentParent : current.parentByKey.entrySet()) {
                 Integer child = currentParent.getKey();
                 Integer parent = currentParent.getValue();
-                if (!wasParentChildReversed(previous, child, parent)) {
+                if (!hadParentChildSwap(previous, child, parent)) {
                     continue;
                 }
 
@@ -358,12 +358,12 @@ public class TreapVisualizationPanel extends JPanel {
                 if (parent.equals(previous.leftChildByKey.get(child))) {
                     return new RotationInfo("RIGHT", child, parent);
                 }
-                return new RotationInfo("UNKNOWN", child, parent);
+                return none();
             }
             return none();
         }
 
-        private static boolean wasParentChildReversed(TreeSnapshot previous, Integer child, Integer parent) {
+        private static boolean hadParentChildSwap(TreeSnapshot previous, Integer child, Integer parent) {
             Integer previousParentOfParent = previous.parentByKey.get(parent);
             return previousParentOfParent != null && previousParentOfParent.equals(child);
         }
