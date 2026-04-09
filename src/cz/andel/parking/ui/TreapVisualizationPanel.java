@@ -1,5 +1,7 @@
 package cz.andel.parking.ui;
 
+import cz.andel.ds.Treap;
+
 import javax.swing.JPanel;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -10,6 +12,7 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.RenderingHints;
+import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,15 +20,12 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 public class TreapVisualizationPanel extends JPanel {
-    private final Supplier<List<List<Optional<Map.Entry<Integer, Integer>>>>> layoutSupplier;
-    private final Supplier<List<String>> eventsSupplier;
+    private final Supplier<Treap<Integer, ?>> treapSupplier;
+    private TreeSnapshot lastSnapshot = TreeSnapshot.empty();
+    private RotationInfo lastRotation = RotationInfo.none();
 
-    public TreapVisualizationPanel(
-            Supplier<List<List<Optional<Map.Entry<Integer, Integer>>>>> layoutSupplier,
-            Supplier<List<String>> eventsSupplier
-    ) {
-        this.layoutSupplier = layoutSupplier;
-        this.eventsSupplier = eventsSupplier;
+    public TreapVisualizationPanel(Supplier<Treap<Integer, ?>> treapSupplier) {
+        this.treapSupplier = treapSupplier;
         setBackground(new Color(252, 252, 255));
     }
 
@@ -36,9 +36,13 @@ public class TreapVisualizationPanel extends JPanel {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
-        List<List<Optional<Map.Entry<Integer, Integer>>>> levels = layoutSupplier.get();
-        List<String> events = eventsSupplier.get();
-        RotationKeys rotationKeys = parseRotationKeys(events);
+        TreeSnapshot snapshot = TreeSnapshot.fromTreap(treapSupplier.get());
+        if (!snapshot.structureSignature.equals(lastSnapshot.structureSignature)) {
+            lastRotation = RotationInfo.detect(lastSnapshot, snapshot);
+            lastSnapshot = snapshot;
+        }
+
+        List<List<Optional<Map.Entry<Integer, Integer>>>> levels = snapshot.levels;
 
         GradientPaint bg = new GradientPaint(
                 0, 0, new Color(247, 250, 255),
@@ -47,10 +51,9 @@ public class TreapVisualizationPanel extends JPanel {
         g.setPaint(bg);
         g.fillRect(0, 0, getWidth(), getHeight());
 
-        String rotationInfo = findLastRotation(events);
         g.setColor(new Color(53, 65, 92));
         g.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        g.drawString(rotationInfo == null ? "Rotation: none in last mutation" : "Rotation: " + rotationInfo, 14, 18);
+        g.drawString(lastRotation.label(), 14, 18);
 
         if (levels.isEmpty()) {
             g.setFont(new Font("Segoe UI", Font.PLAIN, 13));
@@ -121,7 +124,7 @@ public class TreapVisualizationPanel extends JPanel {
                 int x = p.x;
                 int y = p.y;
                 int key = node.get().getKey();
-                boolean highlighted = rotationKeys.matches(key);
+                boolean highlighted = lastRotation.matches(key);
 
                 if (highlighted) {
                     g.setColor(new Color(255, 214, 102, 130));
@@ -155,16 +158,6 @@ public class TreapVisualizationPanel extends JPanel {
         g.dispose();
     }
 
-    private static String findLastRotation(List<String> events) {
-        for (int i = events.size() - 1; i >= 0; i--) {
-            String e = events.get(i);
-            if (e.startsWith("Rotate ")) {
-                return e;
-            }
-        }
-        return null;
-    }
-
     private void drawArrow(Graphics2D g, int x1, int y1, int x2, int y2) {
         double angle = Math.atan2(y2 - y1, x2 - x1);
         int len = 7;
@@ -178,57 +171,157 @@ public class TreapVisualizationPanel extends JPanel {
         g.drawLine(ax, ay, rx, ry);
     }
 
-    private RotationKeys parseRotationKeys(List<String> events) {
-        String rotation = findLastRotation(events);
-        if (rotation == null) {
-            return RotationKeys.none();
+    private static final class TreeSnapshot {
+        private final List<List<Optional<Map.Entry<Integer, Integer>>>> levels;
+        private final Map<Integer, Integer> parentByKey;
+        private final Map<Integer, Integer> leftChildByKey;
+        private final Map<Integer, Integer> rightChildByKey;
+        private final String structureSignature;
+
+        private TreeSnapshot(
+                List<List<Optional<Map.Entry<Integer, Integer>>>> levels,
+                Map<Integer, Integer> parentByKey,
+                Map<Integer, Integer> leftChildByKey,
+                Map<Integer, Integer> rightChildByKey,
+                String structureSignature
+        ) {
+            this.levels = levels;
+            this.parentByKey = parentByKey;
+            this.leftChildByKey = leftChildByKey;
+            this.rightChildByKey = rightChildByKey;
+            this.structureSignature = structureSignature;
         }
 
-        Integer key = extractIntAfter(rotation, "key=");
-        Integer pivot = extractIntAfter(rotation, "pivot key=");
-        if (key == null && pivot == null) {
-            return RotationKeys.none();
+        private static TreeSnapshot empty() {
+            return new TreeSnapshot(List.of(), Map.of(), Map.of(), Map.of(), "empty");
         }
-        return new RotationKeys(key, pivot);
-    }
 
-    private Integer extractIntAfter(String text, String marker) {
-        int start = text.indexOf(marker);
-        if (start < 0) {
-            return null;
-        }
-        start += marker.length();
-        StringBuilder digits = new StringBuilder();
-        while (start < text.length()) {
-            char ch = text.charAt(start);
-            if (Character.isDigit(ch) || (ch == '-' && digits.isEmpty())) {
-                digits.append(ch);
-                start++;
-            } else {
-                break;
+        private static TreeSnapshot fromTreap(Treap<Integer, ?> treap) {
+            if (treap == null) {
+                return empty();
+            }
+
+            try {
+                Field rootField = treap.getClass().getDeclaredField("root");
+                rootField.setAccessible(true);
+                Object root = rootField.get(treap);
+                if (root == null) {
+                    return empty();
+                }
+
+                Field keyField = root.getClass().getDeclaredField("key");
+                Field priorityField = root.getClass().getDeclaredField("priority");
+                Field leftField = root.getClass().getDeclaredField("left");
+                Field rightField = root.getClass().getDeclaredField("right");
+                keyField.setAccessible(true);
+                priorityField.setAccessible(true);
+                leftField.setAccessible(true);
+                rightField.setAccessible(true);
+
+                List<List<Optional<Map.Entry<Integer, Integer>>>> levels = new java.util.ArrayList<>();
+                Map<Integer, Integer> parentByKey = new HashMap<>();
+                Map<Integer, Integer> leftChildByKey = new HashMap<>();
+                Map<Integer, Integer> rightChildByKey = new HashMap<>();
+                List<Object> current = new java.util.ArrayList<>();
+                current.add(root);
+
+                while (!current.isEmpty()) {
+                    List<Optional<Map.Entry<Integer, Integer>>> level = new java.util.ArrayList<>(current.size());
+                    List<Object> next = new java.util.ArrayList<>(current.size() * 2);
+                    boolean hasRealNode = false;
+                    boolean hasNextRealNode = false;
+
+                    for (Object node : current) {
+                        if (node == null) {
+                            level.add(Optional.empty());
+                            next.add(null);
+                            next.add(null);
+                            continue;
+                        }
+
+                        hasRealNode = true;
+                        int key = ((Number) keyField.get(node)).intValue();
+                        int priority = priorityField.getInt(node);
+                        level.add(Optional.of(Map.entry(key, priority)));
+
+                        Object left = leftField.get(node);
+                        Object right = rightField.get(node);
+                        next.add(left);
+                        next.add(right);
+
+                        if (left != null) {
+                            int leftKey = ((Number) keyField.get(left)).intValue();
+                            parentByKey.put(leftKey, key);
+                            leftChildByKey.put(key, leftKey);
+                            hasNextRealNode = true;
+                        }
+                        if (right != null) {
+                            int rightKey = ((Number) keyField.get(right)).intValue();
+                            parentByKey.put(rightKey, key);
+                            rightChildByKey.put(key, rightKey);
+                            hasNextRealNode = true;
+                        }
+                    }
+
+                    if (!hasRealNode) {
+                        break;
+                    }
+
+                    levels.add(level);
+                    if (!hasNextRealNode) {
+                        break;
+                    }
+                    current = next;
+                }
+
+                String signature = parentByKey.toString() + "|" + leftChildByKey + "|" + rightChildByKey;
+                return new TreeSnapshot(levels, parentByKey, leftChildByKey, rightChildByKey, signature);
+            } catch (ReflectiveOperationException ex) {
+                throw new IllegalStateException("Treap reflection failed", ex);
             }
         }
-        if (digits.isEmpty()) {
-            return null;
-        }
-        try {
-            return Integer.parseInt(digits.toString());
-        } catch (NumberFormatException ex) {
-            return null;
-        }
     }
 
-    private static final class RotationKeys {
+    private static final class RotationInfo {
+        private final String direction;
         private final Integer key;
         private final Integer pivot;
 
-        private RotationKeys(Integer key, Integer pivot) {
+        private RotationInfo(String direction, Integer key, Integer pivot) {
+            this.direction = direction;
             this.key = key;
             this.pivot = pivot;
         }
 
-        private static RotationKeys none() {
-            return new RotationKeys(null, null);
+        private static RotationInfo none() {
+            return new RotationInfo(null, null, null);
+        }
+
+        private static RotationInfo detect(TreeSnapshot previous, TreeSnapshot current) {
+            for (Map.Entry<Integer, Integer> currentParent : current.parentByKey.entrySet()) {
+                Integer child = currentParent.getKey();
+                Integer parent = currentParent.getValue();
+                Integer previousParentOfParent = previous.parentByKey.get(parent);
+                if (previousParentOfParent == null || !previousParentOfParent.equals(child)) {
+                    continue;
+                }
+
+                if (parent.equals(previous.rightChildByKey.get(child))) {
+                    return new RotationInfo("LEFT", child, parent);
+                }
+                if (parent.equals(previous.leftChildByKey.get(child))) {
+                    return new RotationInfo("RIGHT", child, parent);
+                }
+                return new RotationInfo("UNKNOWN", child, parent);
+            }
+            return none();
+        }
+
+        private String label() {
+            if (direction == null) {
+                return "Rotation: none in last mutation";
+            }
+            return "Rotation: " + direction + " at key=" + key + " (pivot key=" + pivot + ")";
         }
 
         private boolean matches(int value) {

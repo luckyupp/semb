@@ -1,10 +1,7 @@
 package cz.andel.ds;
 
-import java.util.ArrayDeque;
 import java.util.AbstractMap;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -28,11 +25,6 @@ public class Treap<K extends Comparable<K>, V> {
         }
     }
 
-    private static final class ValidationState {
-        private boolean valid = true;
-        private String message = "Treap invariants OK";
-    }
-
     private static final class InsertState {
         private boolean inserted;
     }
@@ -45,9 +37,6 @@ public class Treap<K extends Comparable<K>, V> {
     private int priorityBound;
     private Node<K, V> root;
     private int size;
-    private List<String> lastOperationEvents = List.of();
-    private boolean lastInvariantsValid = true;
-    private String lastInvariantMessage = "Treap invariants OK";
 
     public Treap() {
         this(new Random(), DEFAULT_PRIORITY_BOUND);
@@ -107,28 +96,23 @@ public class Treap<K extends Comparable<K>, V> {
 
     public boolean insertWithPriority(K key, V value, int priority) {
         requireKey(key);
-        List<String> events = new ArrayList<>();
         InsertState state = new InsertState();
-        root = insertRecursive(root, key, value, priority, state, events);
+        root = insertRecursive(root, key, value, priority, state);
         if (state.inserted) {
             size++;
         }
-        ValidationState validationState = validate();
-        storeLastOperation(events, validationState);
+        validateOrThrow();
         return state.inserted;
     }
 
     public boolean delete(K key) {
         requireKey(key);
-        // Deletion keeps BST property and restores heap property via rotations.
-        List<String> events = new ArrayList<>();
         DeleteState state = new DeleteState();
-        root = deleteRecursive(root, key, state, events);
+        root = deleteRecursive(root, key, state);
         if (state.deleted) {
             size--;
         }
-        ValidationState validationState = validate();
-        storeLastOperation(events, validationState);
+        validateOrThrow();
         return state.deleted;
     }
 
@@ -188,196 +172,91 @@ public class Treap<K extends Comparable<K>, V> {
         return Optional.empty();
     }
 
-    public List<String> lastOperationEvents() {
-        return Collections.unmodifiableList(lastOperationEvents);
-    }
-
-    public boolean lastInvariantsValid() {
-        return lastInvariantsValid;
-    }
-
-    public String lastInvariantMessage() {
-        return lastInvariantMessage;
-    }
-
-    public String levelOrderSnapshot() {
-        if (root == null) {
-            return "(empty)";
-        }
-        StringBuilder builder = new StringBuilder();
-        Deque<Node<K, V>> queue = new ArrayDeque<>();
-        queue.add(root);
-        int level = 0;
-        while (!queue.isEmpty()) {
-            int count = queue.size();
-            builder.append("level ").append(level).append(": ");
-            for (int i = 0; i < count; i++) {
-                Node<K, V> node = queue.removeFirst();
-                builder.append("[k=").append(node.key).append(", p=").append(node.priority).append("]");
-                if (i < count - 1) {
-                    builder.append(" ");
-                }
-                if (node.left != null) {
-                    queue.addLast(node.left);
-                }
-                if (node.right != null) {
-                    queue.addLast(node.right);
-                }
-            }
-            if (!queue.isEmpty()) {
-                builder.append(System.lineSeparator());
-            }
-            level++;
-        }
-        return builder.toString();
-    }
-
-    public List<List<Optional<Map.Entry<K, Integer>>>> levelLayout() {
-        if (root == null) {
-            return List.of();
-        }
-
-        List<List<Optional<Map.Entry<K, Integer>>>> levels = new ArrayList<>();
-        List<Node<K, V>> current = new ArrayList<>();
-        current.add(root);
-
-        while (!current.isEmpty()) {
-            List<Optional<Map.Entry<K, Integer>>> level = new ArrayList<>(current.size());
-            List<Node<K, V>> next = new ArrayList<>(current.size() * 2);
-            boolean hasRealNode = false;
-            boolean hasNextRealNode = false;
-
-            for (Node<K, V> node : current) {
-                if (node == null) {
-                    level.add(Optional.empty());
-                    next.add(null);
-                    next.add(null);
-                    continue;
-                }
-
-                hasRealNode = true;
-                level.add(Optional.of(new AbstractMap.SimpleImmutableEntry<>(node.key, node.priority)));
-                next.add(node.left);
-                next.add(node.right);
-                if (node.left != null || node.right != null) {
-                    hasNextRealNode = true;
-                }
-            }
-
-            if (!hasRealNode) {
-                break;
-            }
-
-            levels.add(level);
-            if (!hasNextRealNode) {
-                break;
-            }
-            current = next;
-        }
-
-        return levels;
-    }
-
     private Node<K, V> insertRecursive(
             Node<K, V> node,
             K key,
             V value,
             int priority,
-            InsertState state,
-            List<String> events
+            InsertState state
     ) {
         if (node == null) {
             state.inserted = true;
-            events.add("Inserted key=" + key + " with priority=" + priority);
             return new Node<>(key, value, priority);
         }
 
         int cmp = key.compareTo(node.key);
         if (cmp == 0) {
-            events.add("Insert blocked: key=" + key + " already exists");
             return node;
         }
 
         if (cmp < 0) {
-            node.left = insertRecursive(node.left, key, value, priority, state, events);
+            node.left = insertRecursive(node.left, key, value, priority, state);
             // If left child violates max-heap priority, rotate it up.
             if (state.inserted && node.left != null && node.left.priority > node.priority) {
-                node = rotateRight(node, events);
+                node = rotateRight(node);
             }
         } else {
-            node.right = insertRecursive(node.right, key, value, priority, state, events);
+            node.right = insertRecursive(node.right, key, value, priority, state);
             // If right child violates max-heap priority, rotate it up.
             if (state.inserted && node.right != null && node.right.priority > node.priority) {
-                node = rotateLeft(node, events);
+                node = rotateLeft(node);
             }
         }
         return node;
     }
 
-    private Node<K, V> deleteRecursive(Node<K, V> node, K key, DeleteState state, List<String> events) {
+    private Node<K, V> deleteRecursive(Node<K, V> node, K key, DeleteState state) {
         if (node == null) {
             return null;
         }
 
         int cmp = key.compareTo(node.key);
         if (cmp < 0) {
-            node.left = deleteRecursive(node.left, key, state, events);
+            node.left = deleteRecursive(node.left, key, state);
             return node;
         }
         if (cmp > 0) {
-            node.right = deleteRecursive(node.right, key, state, events);
+            node.right = deleteRecursive(node.right, key, state);
             return node;
         }
 
         state.deleted = true;
-        events.add("Deleting key=" + key);
 
         if (node.left == null && node.right == null) {
-            events.add("Deleted leaf key=" + key);
             return null;
         }
         if (node.left == null) {
-            events.add("Deleted node key=" + key + " replaced by right child");
             return node.right;
         }
         if (node.right == null) {
-            events.add("Deleted node key=" + key + " replaced by left child");
             return node.left;
         }
 
         if (node.left.priority > node.right.priority) {
             // Bubble higher-priority child up, then continue deleting key below.
-            node = rotateRight(node, events);
-            node.right = deleteRecursive(node.right, key, state, events);
+            node = rotateRight(node);
+            node.right = deleteRecursive(node.right, key, state);
         } else {
             // Bubble higher-priority child up, then continue deleting key below.
-            node = rotateLeft(node, events);
-            node.left = deleteRecursive(node.left, key, state, events);
+            node = rotateLeft(node);
+            node.left = deleteRecursive(node.left, key, state);
         }
         return node;
     }
 
-    private Node<K, V> rotateLeft(Node<K, V> node, List<String> events) {
+    private Node<K, V> rotateLeft(Node<K, V> node) {
         // Left rotation around node: node.right becomes new subtree root.
         Node<K, V> pivot = node.right;
         node.right = pivot.left;
         pivot.left = node;
-        events.add(
-                "Rotate LEFT at key=" + node.key
-                        + " (pivot key=" + pivot.key + ")"
-        );
         return pivot;
     }
 
-    private Node<K, V> rotateRight(Node<K, V> node, List<String> events) {
+    private Node<K, V> rotateRight(Node<K, V> node) {
         // Right rotation around node: node.left becomes new subtree root.
         Node<K, V> pivot = node.left;
         node.left = pivot.right;
         pivot.right = node;
-        events.add(
-                "Rotate RIGHT at key=" + node.key
-                        + " (pivot key=" + pivot.key + ")"
-        );
         return pivot;
     }
 
@@ -396,47 +275,29 @@ public class Treap<K extends Comparable<K>, V> {
         }
     }
 
-    private void storeLastOperation(List<String> events, ValidationState validationState) {
-        lastOperationEvents = List.copyOf(events);
-        lastInvariantsValid = validationState.valid;
-        lastInvariantMessage = validationState.message;
+    private void validateOrThrow() {
+        if (!validateRecursive(root, null, null, null)) {
+            throw new IllegalStateException("Treap invariants violated");
+        }
     }
 
-    private ValidationState validate() {
-        ValidationState state = new ValidationState();
-        validateRecursive(root, null, null, null, state);
-        return state;
-    }
-
-    private void validateRecursive(
-            Node<K, V> node,
-            K minExclusive,
-            K maxExclusive,
-            Integer parentPriority,
-            ValidationState state
-    ) {
+    private boolean validateRecursive(Node<K, V> node, K minExclusive, K maxExclusive, Integer parentPriority) {
         // Checks both invariants: strict BST ordering and max-heap priorities.
-        if (node == null || !state.valid) {
-            return;
+        if (node == null) {
+            return true;
         }
 
         if (minExclusive != null && node.key.compareTo(minExclusive) <= 0) {
-            state.valid = false;
-            state.message = "BST violation: key " + node.key + " <= min boundary " + minExclusive;
-            return;
+            return false;
         }
         if (maxExclusive != null && node.key.compareTo(maxExclusive) >= 0) {
-            state.valid = false;
-            state.message = "BST violation: key " + node.key + " >= max boundary " + maxExclusive;
-            return;
+            return false;
         }
         if (parentPriority != null && node.priority > parentPriority) {
-            state.valid = false;
-            state.message = "Heap violation: child priority " + node.priority + " > parent priority " + parentPriority;
-            return;
+            return false;
         }
 
-        validateRecursive(node.left, minExclusive, node.key, node.priority, state);
-        validateRecursive(node.right, node.key, maxExclusive, node.priority, state);
+        return validateRecursive(node.left, minExclusive, node.key, node.priority)
+                && validateRecursive(node.right, node.key, maxExclusive, node.priority);
     }
 }

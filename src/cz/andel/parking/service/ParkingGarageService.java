@@ -1,5 +1,6 @@
 package cz.andel.parking.service;
 
+import cz.andel.ds.Treap;
 import cz.andel.parking.io.ParkingImportRow;
 import cz.andel.parking.model.NearestFreeSpotResult;
 import cz.andel.parking.model.OccupiedSpot;
@@ -10,7 +11,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class ParkingGarageService {
@@ -129,19 +129,9 @@ public class ParkingGarageService {
         return floor.findNearestFreeSpot(requestedSpot);
     }
 
-    public String floorTreapSnapshot(int floorNumber) {
+    public Treap<Integer, ParkingRecord> floorTreap(int floorNumber) {
         ParkingFloorService floor = getFloorOrNull(floorNumber);
-        return floor == null ? "Floor does not exist." : floor.treapSnapshot();
-    }
-
-    public List<List<Optional<Map.Entry<Integer, Integer>>>> floorTreapLayout(int floorNumber) {
-        ParkingFloorService floor = getFloorOrNull(floorNumber);
-        return floor == null ? List.of() : floor.treapLayout();
-    }
-
-    public List<String> floorLastTreapEvents(int floorNumber) {
-        ParkingFloorService floor = getFloorOrNull(floorNumber);
-        return floor == null ? List.of() : floor.lastTreapEvents();
+        return floor == null ? null : floor.treap();
     }
 
     public String importRows(List<ParkingImportRow> rows) {
@@ -238,8 +228,12 @@ public class ParkingGarageService {
             appendResult(out, scenarioFloor.occupySpotWithPriorityForDemo(2, new ParkingRecord("2AA-1002", "Rotation B", "CAR"), 300));
             appendResult(out, scenarioFloor.occupySpotWithPriorityForDemo(1, new ParkingRecord("2AA-1003", "Rotation C", "CAR"), 500));
             appendResult(out, scenarioFloor.releaseSpot(2));
-            out.append("Treap snapshot floor ").append(rotationFloor).append(":").append(System.lineSeparator())
-                    .append(scenarioFloor.treapSnapshot()).append(System.lineSeparator());
+            out.append("Floor ").append(rotationFloor).append(" occupied spots after rotations:")
+                    .append(System.lineSeparator())
+                    .append(listOccupiedSpotsSorted(rotationFloor).stream()
+                            .map(spot -> "spot=" + spot.spotNumber() + ", priority=" + spot.priority())
+                            .collect(Collectors.joining(System.lineSeparator())))
+                    .append(System.lineSeparator());
         }
 
         out.append(System.lineSeparator())

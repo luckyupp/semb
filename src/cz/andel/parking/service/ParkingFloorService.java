@@ -55,7 +55,6 @@ public class ParkingFloorService {
         boolean inserted = forcedPriority == null
                 ? occupiedTreap.insert(spotNumber, record)
                 : occupiedTreap.insertWithPriority(spotNumber, record, forcedPriority);
-        appendTreapDetails(details);
 
         if (!inserted) {
             return OperationResult.failure("Failed to occupy spot " + spotNumber, details);
@@ -82,7 +81,6 @@ public class ParkingFloorService {
         }
 
         boolean deleted = occupiedTreap.delete(spotNumber);
-        appendTreapDetails(details);
 
         if (!deleted) {
             return OperationResult.failure("Failed to release spot " + spotNumber, details);
@@ -180,18 +178,6 @@ public class ParkingFloorService {
         );
     }
 
-    public String treapSnapshot() {
-        return occupiedTreap.levelOrderSnapshot();
-    }
-
-    public List<List<Optional<Map.Entry<Integer, Integer>>>> treapLayout() {
-        return occupiedTreap.levelLayout();
-    }
-
-    public List<String> lastTreapEvents() {
-        return occupiedTreap.lastOperationEvents();
-    }
-
     public int occupiedCount() {
         return occupiedTreap.size();
     }
@@ -204,12 +190,11 @@ public class ParkingFloorService {
         occupiedTreap.setPriorityBound(priorityBound);
     }
 
-    private boolean isSpotInRange(int spotNumber) {
-        return spotNumber >= 1 && spotNumber <= capacity;
+    public Treap<Integer, ParkingRecord> treap() {
+        return occupiedTreap;
     }
 
-    private void appendTreapDetails(List<String> details) {
-        details.addAll(occupiedTreap.lastOperationEvents());
-        details.add("Invariant check: " + occupiedTreap.lastInvariantMessage());
+    private boolean isSpotInRange(int spotNumber) {
+        return spotNumber >= 1 && spotNumber <= capacity;
     }
 }

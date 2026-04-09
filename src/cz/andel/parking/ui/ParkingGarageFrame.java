@@ -66,8 +66,7 @@ public class ParkingGarageFrame extends JFrame {
         floorStateArea = createTextArea();
         parkingHousePanel = new ParkingHousePanel(garageService, this::selectedFloor);
         treapVisualizationPanel = new TreapVisualizationPanel(
-            () -> garageService.floorTreapLayout(selectedFloor()),
-            () -> garageService.floorLastTreapEvents(selectedFloor())
+                () -> garageService.floorTreap(selectedFloor())
         );
 
         buildUi();
